@@ -8,7 +8,10 @@ that keep aborting with:
 Not affiliated with NBME or its test delivery vendor. It does not touch the exam, the
 browser, or any exam content. It only changes operating-system TCP keepalive settings.
 
-## Update (2026-09-21): why this exists
+Note that I detected this bug on Sunday, September 20th. It is an official bug in the NMBE serving path. 
+I've prepared this git repo to help their developers fix this on the serving side. If you're another test taker that's stumbled upon this, feel free to use it but hopefully the official folk have already pushed a fix! 
+
+## Why this exists
 
 My girlfriend is taking NBME's official Step 2 CK self-assessments (the Comprehensive
 Clinical Science Self-Assessment) at home, in Chrome on a Mac, and her exam has a bug.
