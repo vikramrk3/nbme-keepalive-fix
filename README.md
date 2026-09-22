@@ -11,7 +11,7 @@ expect elsewhere.
 Not affiliated with NBME or its test delivery vendor. It does not touch the exam, the
 browser, or any exam content. It only changes operating-system TCP keepalive settings.
 
-Note that I detected this bug on Sunday, September 20th. It is an official bug in the NMBE serving path. 
+Note that I detected this bug on Sunday, September 20th. It is an official bug in the NBME serving path. 
 I've prepared this git repo to help their developers fix this on the serving side. If you're another test taker that's stumbled upon this, feel free to use it but hopefully the official folk have already pushed a fix! 
 
 ## Why this exists
