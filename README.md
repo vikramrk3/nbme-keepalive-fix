@@ -1,22 +1,44 @@
 # nbme-keepalive-fix
 
 A macOS workaround for NBME self-assessments (delivered through `www.starttest.com`)
-that keep kicking you back to the start page with:
+that keep aborting with:
 
 > `SE=1002` … `Item Loading (...) Navigation was not complete in sufficient time.`
-
-The browser is not crashing. The exam host silently drops idle connections after about
-two minutes, the browser does not find out, and the next click is sent into a dead
-connection. Thirty seconds later the exam's own load watchdog gives up and aborts.
-This script changes one macOS network setting so dead connections are detected and
-replaced instead of reused.
 
 Not affiliated with NBME or its test delivery vendor. It does not touch the exam, the
 browser, or any exam content. It only changes operating-system TCP keepalive settings.
 
-## Quick start
+## Update (2026-09-21): why this exists
 
-On the Mac you take the exam on, in Terminal:
+My girlfriend is taking NBME's official Step 2 CK self-assessments (the Comprehensive
+Clinical Science Self-Assessment) at home, in Chrome on a Mac, and her exam has a bug.
+Every few questions the exam abruptly throws her out of the block and back to the
+launch page with the error above. Relaunching resumes the block where it left off, but
+each abort costs a minute or more and breaks concentration, and it happened more than a
+dozen times in one afternoon. Nothing was wrong with the Mac, the browser, or the
+internet connection.
+
+### Diagnosis
+
+The browser is not crashing, and neither is the exam. The exam host silently drops any
+connection that has been idle for about two minutes, without telling the browser.
+Chrome keeps idle connections for up to five minutes and reuses them, so a click on
+Next between roughly two and five minutes after the last page load is sent into a dead
+connection. Nothing ever comes back, and after 30 seconds the exam's own load watchdog
+gives up and aborts the block.
+
+This was reproduced outside the browser with plain sockets set up the way Chrome sets
+up its own: connections to `www.starttest.com` that sat idle for 150 to 270 seconds went
+silently dead 8 times out of 8, while identical connections to two other websites, on the
+same network during the same minutes, did not. The full evidence is under
+[How this was diagnosed](#how-this-was-diagnosed).
+
+### Solution
+
+Change one macOS network setting so the Mac itself probes idle connections and gives up
+on a dead one about ten seconds after its first unanswered probe. Chrome then discards
+the dead connection and reconnects instead of hanging. On the Mac the exam runs on, in
+Terminal, before launching the exam:
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/vikramrk3/nbme-keepalive-fix/main/nbme-fix.sh
@@ -24,12 +46,18 @@ chmod +x nbme-fix.sh
 ./nbme-fix.sh on        # asks for your Mac password
 ```
 
-Do this before you launch the exam. It takes effect immediately, including for a
-browser that is already open. When you are done:
+It takes effect immediately, including for a browser that is already open. When the
+exam is over:
 
 ```sh
 ./nbme-fix.sh off       # or just reboot; the setting does not survive a restart
 ```
+
+In practice this took the exam from aborting every one to three questions to running a
+whole block cleanly. It shrinks the problem rather than removing it, though: a click
+that lands between about 2:00 and 2:30 after the last page load can still fail. See
+[What still goes wrong](#what-still-goes-wrong). The real fix belongs to NBME's test
+delivery vendor: close idle connections in a way the browser can see.
 
 ## Commands
 
@@ -46,9 +74,8 @@ or not working), or `INCONCLUSIVE` (the connection was not dropped this time).
 
 ## What still goes wrong
 
-The fix shrinks the problem; it cannot remove it. The server drops an idle connection
-at roughly 2:05 and macOS notices at roughly 2:27. A click that lands in that gap can
-still fail.
+The server drops an idle connection at roughly 2:05 and macOS notices at roughly 2:27.
+A click that lands in that gap can still fail.
 
 | Time since the exam last loaded something | Without the fix | With the fix |
 |---|---|---|
