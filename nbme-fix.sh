@@ -20,15 +20,22 @@ DEFAULTS=(0 7200000 75000 8)
 EXAM_HOST="www.starttest.com"
 DEFAULT_IDLE=150
 
+# 'install' writes a launchd job here so the fix is re-applied at every startup.
+DAEMON_LABEL="com.nbme-keepalive-fix"
+DAEMON_DIR=${NBME_FIX_DAEMON_DIR:-/Library/LaunchDaemons}
+DAEMON_PLIST="$DAEMON_DIR/$DAEMON_LABEL.plist"
+
 usage() {
   cat <<EOF
-Usage: $(basename "$0") on | off | status | test [idle_seconds]
+Usage: $(basename "$0") on | off | install | uninstall | status | test [idle_seconds]
 
-  on      apply the TCP keepalive fix (needs sudo; resets on reboot)
-  off     restore the macOS default TCP keepalive settings (needs sudo)
-  status  show the current settings and whether the fix is active
-  test    open a browser-style idle connection to $EXAM_HOST and check that a
-          silently dropped connection is detected (default idle: ${DEFAULT_IDLE}s)
+  on         apply the TCP keepalive fix until the next reboot (needs sudo)
+  off        restore the macOS default TCP keepalive settings (needs sudo)
+  install    apply the fix now AND at every startup, until uninstalled (needs sudo)
+  uninstall  remove the startup job and restore the defaults (needs sudo)
+  status     show the current settings and whether the fix is active
+  test       open a browser-style idle connection to $EXAM_HOST and check that a
+             silently dropped connection is detected (default idle: ${DEFAULT_IDLE}s)
 EOF
 }
 
@@ -64,10 +71,76 @@ show_status() {
   done
   echo
   case "$(current_state)" in
-    ACTIVE) echo "Fix is ACTIVE. It stays on until you run '$(basename "$0") off' or reboot." ;;
+    ACTIVE)
+      if daemon_installed; then
+        echo "Fix is ACTIVE and re-applied at every startup until you run '$(basename "$0") uninstall'."
+      else
+        echo "Fix is ACTIVE. It stays on until you run '$(basename "$0") off' or reboot."
+      fi
+      ;;
     OFF) echo "Fix is OFF (macOS defaults). Run '$(basename "$0") on' before starting the exam." ;;
     PARTIAL) echo "Fix is PARTIAL: the values match neither the fix nor the defaults. Run 'on' or 'off' to reset them." ;;
   esac
+  if daemon_installed; then
+    echo "Boot job: installed ($DAEMON_PLIST)."
+  else
+    echo "Boot job: not installed, so the fix resets at reboot. '$(basename "$0") install' makes it stick."
+  fi
+}
+
+daemon_installed() {
+  [ -f "$DAEMON_PLIST" ]
+}
+
+write_plist() {
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$DAEMON_LABEL</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/sbin/sysctl</string>
+		<string>-w</string>
+		<string>${KEYS[0]}=${FIX[0]}</string>
+		<string>${KEYS[1]}=${FIX[1]}</string>
+		<string>${KEYS[2]}=${FIX[2]}</string>
+		<string>${KEYS[3]}=${FIX[3]}</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
+EOF
+}
+
+install_daemon() {
+  local tmp
+  tmp=$(mktemp)
+  write_plist > "$tmp"
+  # launchd only accepts daemon plists that are owned by root and not group/world
+  # writable, so the file is created by root through sudo with a 022 umask.
+  if ! sudo sh -c "umask 022 && cat > '$DAEMON_PLIST'" < "$tmp"; then
+    rm -f "$tmp"
+    echo "The boot job was not installed (sudo failed)." >&2
+    exit 1
+  fi
+  rm -f "$tmp"
+  sudo launchctl bootout "system/$DAEMON_LABEL" >/dev/null 2>&1 || true
+  if ! sudo launchctl bootstrap system "$DAEMON_PLIST"; then
+    echo "The boot job was written but launchd refused to load it." >&2
+    exit 1
+  fi
+}
+
+remove_daemon() {
+  sudo launchctl bootout "system/$DAEMON_LABEL" >/dev/null 2>&1 || true
+  if daemon_installed && ! sudo rm -f "$DAEMON_PLIST"; then
+    echo "The boot job could not be removed (sudo failed)." >&2
+    exit 1
+  fi
 }
 
 # apply_values <failure message> <four values...>
@@ -189,6 +262,25 @@ main() {
       ;;
     off)
       require_macos
+      apply_values "The defaults were not restored (sudo failed)." "${DEFAULTS[@]}"
+      echo
+      show_status
+      if daemon_installed; then
+        echo
+        echo "Note: the boot job is still installed, so the fix comes back at the next startup."
+        echo "Run '$(basename "$0") uninstall' to remove it for good."
+      fi
+      ;;
+    install)
+      require_macos
+      apply_values "The fix was not applied (sudo failed)." "${FIX[@]}"
+      install_daemon
+      echo
+      show_status
+      ;;
+    uninstall)
+      require_macos
+      remove_daemon
       apply_values "The defaults were not restored (sudo failed)." "${DEFAULTS[@]}"
       echo
       show_status

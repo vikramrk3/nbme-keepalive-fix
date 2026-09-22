@@ -52,11 +52,14 @@ chmod +x nbme-fix.sh
 ./nbme-fix.sh on        # asks for your Mac password
 ```
 
-It takes effect immediately, including for a browser that is already open. When the
-exam is over:
+It takes effect immediately, including for a browser that is already open. `on` lasts
+until the next restart; if the exam is tomorrow or someone else will be using the Mac,
+use `install` instead so nothing depends on remembering it (see
+[Setting up someone else's Mac](#setting-up-someone-elses-mac)). When the exam is over:
 
 ```sh
 ./nbme-fix.sh off       # or just reboot; the setting does not survive a restart
+./nbme-fix.sh uninstall # if you used install
 ```
 
 In practice this took the exam from aborting every one to three questions to running a
@@ -71,12 +74,45 @@ delivery vendor: close idle connections in a way the browser can see.
 |---|---|---|
 | `./nbme-fix.sh on` | Applies the fix | yes |
 | `./nbme-fix.sh off` | Restores the macOS defaults | yes |
-| `./nbme-fix.sh status` | Shows the current values and whether the fix is active | no |
+| `./nbme-fix.sh install` | Applies the fix now and at every startup, until uninstalled | yes |
+| `./nbme-fix.sh uninstall` | Removes the startup job and restores the defaults | yes |
+| `./nbme-fix.sh status` | Shows the current values, whether the fix is active, and whether the startup job is installed | no |
 | `./nbme-fix.sh test` | About 3 minutes. Opens a Chrome-style idle connection to the exam host and checks that the silent drop now gets detected | no |
 
 `test` makes two anonymous `HEAD /` requests to `www.starttest.com`. It needs Python 3
 (`xcode-select --install` if you do not have it). Results: `PASS`, `FAIL` (the fix is off
 or not working), or `INCONCLUSIVE` (the connection was not dropped this time).
+
+## Setting up someone else's Mac
+
+For a non-technical test taker, do the setup the night before on their Mac and use
+`install`, so a restart (including an overnight macOS update) cannot silently undo it:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/vikramrk3/nbme-keepalive-fix/main/nbme-fix.sh
+chmod +x nbme-fix.sh
+./nbme-fix.sh install     # their Mac's password; applies now and at every startup
+./nbme-fix.sh test        # ~3 minutes; should end with PASS
+```
+
+`test` is the step that proves it works on *that* Mac. After that there is nothing for
+the test taker to remember: sleep, closing the lid, moving to a library, restarting,
+none of it matters. They only need to use Chrome, the one browser this is tested with.
+
+`install` writes a small launchd job, `/Library/LaunchDaemons/com.nbme-keepalive-fix.plist`,
+that runs `sysctl` with the fix values at every startup. `uninstall` removes it and
+restores the defaults.
+
+### Leaving it on for weeks
+
+Fine. The two settings only change how quickly an *idle* connection that has stopped
+answering keepalive probes is given up on: about 2 seconds instead of about 10 minutes.
+Only apps that turn on TCP keepalive themselves are affected (Chrome and other
+Chromium browsers, ssh, some chat and sync apps), and the effect is that during a
+Wi-Fi hiccup longer than 2 seconds an idle connection is dropped and the app quietly
+reconnects. Battery, speed, security and every other app are untouched, and nothing
+else on the Mac is modified. Still, run `uninstall` once the exams are done, if only to
+leave the Mac as you found it.
 
 ## What still goes wrong
 
@@ -101,7 +137,7 @@ If it does crash, relaunching from the mynbme registration page resumes the bloc
 
 ## What it changes
 
-Two system-wide settings, until the next reboot:
+Two system-wide settings, until the next reboot (or until `uninstall`, if applied with `install`):
 
 | Setting | macOS default | Fix |
 |---|---|---|

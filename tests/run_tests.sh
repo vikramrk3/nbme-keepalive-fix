@@ -31,6 +31,10 @@ setup() {
   export FAKE_SUDO_LOG="$SANDBOX/sudo.log"
   export FAKE_UNAME="Darwin"
   export FAKE_SUDO_EXIT=0
+  export FAKE_LAUNCHCTL_LOG="$SANDBOX/launchctl.log"
+  export NBME_FIX_DAEMON_DIR="$SANDBOX/LaunchDaemons"
+  mkdir "$NBME_FIX_DAEMON_DIR"
+  : > "$FAKE_LAUNCHCTL_LOG"
   : > "$FAKE_SUDO_LOG"
   echo "$DEFAULT_STATE" > "$FAKE_SYSCTL_STATE"
   mkdir "$SANDBOX/bin"
@@ -60,6 +64,10 @@ STUB
 #!/bin/bash
 echo "$FAKE_UNAME"
 STUB
+  cat > "$SANDBOX/bin/launchctl" <<'STUB'
+#!/bin/bash
+echo "$*" >> "$FAKE_LAUNCHCTL_LOG"
+STUB
   chmod +x "$SANDBOX/bin/"*
 }
 
@@ -81,6 +89,7 @@ check() { # check "name" condition-command...
 }
 
 contains() { case "$OUT" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
+lacks() { ! contains "$1"; }
 
 # ---------------------------------------------------------------- status
 setup
@@ -128,6 +137,65 @@ echo "$FIX_STATE" > "$FAKE_SYSCTL_STATE"
 run off
 check "off restores exactly the macOS defaults" [ "$(state)" = "$DEFAULT_STATE" ]
 check "off changes the settings through sudo" grep -q "sysctl -w" "$FAKE_SUDO_LOG"
+teardown
+
+# --------------------------------------------------------- install/uninstall
+PLIST_NAME="com.nbme-keepalive-fix.plist"
+
+setup
+run install
+PLIST="$NBME_FIX_DAEMON_DIR/$PLIST_NAME"
+check "install exits 0" [ "$RC" -eq 0 ]
+check "install applies the fix immediately" [ "$(state)" = "$FIX_STATE" ]
+check "install writes a boot job into the LaunchDaemons dir" [ -f "$PLIST" ]
+check "the boot job is a valid property list" plutil -lint -s "$PLIST"
+check "the boot job runs at load" grep -q "RunAtLoad" "$PLIST"
+check "the boot job sets keepintvl to the fix value" grep -q "net.inet.tcp.keepintvl=1000" "$PLIST"
+check "the boot job sets keepcnt to the fix value" grep -q "net.inet.tcp.keepcnt=2" "$PLIST"
+check "the boot job resets always_keepalive to default" grep -q "net.inet.tcp.always_keepalive=0" "$PLIST"
+check "install loads the boot job with launchctl bootstrap" grep -q "bootstrap system $PLIST" "$FAKE_LAUNCHCTL_LOG"
+check "install writes the boot job through sudo" grep -q "$PLIST_NAME" "$FAKE_SUDO_LOG"
+run status
+check "status reports the boot job as installed" lacks "not installed"
+check "status names the boot job file" contains "$PLIST_NAME"
+teardown
+
+setup
+run install
+run install
+check "install twice still exits 0" [ "$RC" -eq 0 ]
+check "install twice unloads the old job before loading again" grep -q "bootout system/com.nbme-keepalive-fix" "$FAKE_LAUNCHCTL_LOG"
+teardown
+
+setup
+FAKE_SUDO_EXIT=1
+run install
+check "install exits non-zero when sudo is refused" [ "$RC" -ne 0 ]
+check "install leaves the settings untouched when sudo is refused" [ "$(state)" = "$DEFAULT_STATE" ]
+check "install writes no boot job when sudo is refused" [ ! -f "$NBME_FIX_DAEMON_DIR/$PLIST_NAME" ]
+teardown
+
+setup
+run install
+run uninstall
+check "uninstall exits 0" [ "$RC" -eq 0 ]
+check "uninstall removes the boot job file" [ ! -f "$NBME_FIX_DAEMON_DIR/$PLIST_NAME" ]
+check "uninstall unloads the boot job with launchctl bootout" grep -q "bootout system/com.nbme-keepalive-fix" "$FAKE_LAUNCHCTL_LOG"
+check "uninstall restores the macOS defaults" [ "$(state)" = "$DEFAULT_STATE" ]
+run status
+check "status reports the boot job as not installed after uninstall" contains "not installed"
+teardown
+
+setup
+run uninstall
+check "uninstall with nothing installed still exits 0" [ "$RC" -eq 0 ]
+check "uninstall with nothing installed still restores defaults" [ "$(state)" = "$DEFAULT_STATE" ]
+teardown
+
+setup
+run install
+run off
+check "off while the boot job is installed warns that it comes back at boot" contains "uninstall"
 teardown
 
 # ------------------------------------------------------------ usage/guards
