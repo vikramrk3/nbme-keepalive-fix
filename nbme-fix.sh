@@ -7,11 +7,14 @@
 #   ./nbme-fix.sh status  show current values (no password needed)
 #   ./nbme-fix.sh test    ~3 min live check that dead connections now get detected
 #
-# The settings are system-wide and reset on reboot.
+# The settings are system-wide and reset on reboot. Tested with Chrome on macOS only.
 set -euo pipefail
 
 KEYS=(net.inet.tcp.always_keepalive net.inet.tcp.keepidle net.inet.tcp.keepintvl net.inet.tcp.keepcnt)
-FIX=(1 30000 3000 3)
+# Only keepintvl and keepcnt change. Chrome enables keepalive on its own sockets with
+# its own 45 s idle time, so always_keepalive and keepidle would not affect it; they are
+# listed here at their defaults so that 'on' also undoes the first release, which set them.
+FIX=(0 7200000 1000 2)
 DEFAULTS=(0 7200000 75000 8)
 
 EXAM_HOST="www.starttest.com"

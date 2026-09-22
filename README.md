@@ -5,6 +5,9 @@ that keep aborting with:
 
 > `SE=1002` … `Item Loading (...) Navigation was not complete in sufficient time.`
 
+**Tested only with Chrome on macOS.** See [Other browsers](#other-browsers) for what to
+expect elsewhere.
+
 Not affiliated with NBME or its test delivery vendor. It does not touch the exam, the
 browser, or any exam content. It only changes operating-system TCP keepalive settings.
 
@@ -38,10 +41,10 @@ same network during the same minutes, did not. The full evidence is under
 
 ### Solution
 
-Change one macOS network setting so the Mac itself probes idle connections and gives up
-on a dead one about ten seconds after its first unanswered probe. Chrome then discards
-the dead connection and reconnects instead of hanging. On the Mac the exam runs on, in
-Terminal, before launching the exam:
+Change one macOS network setting so that when the Mac's own keepalive probe of an idle
+connection goes unanswered, it gives up on that connection within about two seconds
+instead of about ten minutes. Chrome then discards the dead connection and reconnects
+instead of hanging. On the Mac the exam runs on, in Terminal, before launching the exam:
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/vikramrk3/nbme-keepalive-fix/main/nbme-fix.sh
@@ -58,7 +61,7 @@ exam is over:
 
 In practice this took the exam from aborting every one to three questions to running a
 whole block cleanly. It shrinks the problem rather than removing it, though: a click
-that lands between about 2:00 and 2:30 after the last page load can still fail. See
+that lands between about 2:05 and 2:20 after the last page load can still fail. See
 [What still goes wrong](#what-still-goes-wrong). The real fix belongs to NBME's test
 delivery vendor: close idle connections in a way the browser can see.
 
@@ -69,7 +72,7 @@ delivery vendor: close idle connections in a way the browser can see.
 | `./nbme-fix.sh on` | Applies the fix | yes |
 | `./nbme-fix.sh off` | Restores the macOS defaults | yes |
 | `./nbme-fix.sh status` | Shows the current values and whether the fix is active | no |
-| `./nbme-fix.sh test` | About 3 minutes. Opens a browser-style idle connection to the exam host and checks that the silent drop now gets detected | no |
+| `./nbme-fix.sh test` | About 3 minutes. Opens a Chrome-style idle connection to the exam host and checks that the silent drop now gets detected | no |
 
 `test` makes two anonymous `HEAD /` requests to `www.starttest.com`. It needs Python 3
 (`xcode-select --install` if you do not have it). Results: `PASS`, `FAIL` (the fix is off
@@ -77,43 +80,74 @@ or not working), or `INCONCLUSIVE` (the connection was not dropped this time).
 
 ## What still goes wrong
 
-The server drops an idle connection at roughly 2:05 and macOS notices at roughly 2:27.
-A click that lands in that gap can still fail.
+The server drops an idle connection at roughly 2:05. Chrome probes its idle connections
+every 45 seconds (0:45, 1:30, 2:15), so the earliest anything can notice is the 2:15
+probe, and with the fix macOS declares the connection dead at about 2:19. A click that
+lands in that gap can still fail. The gap cannot be closed from the Mac's side: the
+45-second probe schedule is built into Chrome.
 
 | Time since the exam last loaded something | Without the fix | With the fix |
 |---|---|---|
 | under ~1:45 | safe | safe |
-| ~2:00 to ~2:30 | **likely crash** | **can still crash** |
-| ~2:30 to 5:00 | **likely crash** | safe |
+| ~2:05 to ~2:20 | **likely crash** | **can still crash** |
+| ~2:20 to 5:00 | **likely crash** | safe |
 | over 5:00 | safe (browser already discarded the connections) | safe |
 
 Practical habit: on a long question, either move on before about 1:50 or wait until
-about 2:35 before clicking Next. A Next then Previous hop roughly every 90 seconds also
+about 2:25 before clicking Next. A Next then Previous hop roughly every 90 seconds also
 keeps the connections fresh.
 
 If it does crash, relaunching from the mynbme registration page resumes the block.
 
 ## What it changes
 
-Four system-wide settings, until the next reboot:
+Two system-wide settings, until the next reboot:
 
 | Setting | macOS default | Fix |
 |---|---|---|
-| `net.inet.tcp.always_keepalive` | `0` | `1` |
-| `net.inet.tcp.keepidle` (ms) | `7200000` | `30000` |
-| `net.inet.tcp.keepintvl` (ms) | `75000` | `3000` |
-| `net.inet.tcp.keepcnt` | `8` | `3` |
+| `net.inet.tcp.keepintvl` (ms between keepalive retries) | `75000` | `1000` |
+| `net.inet.tcp.keepcnt` (unanswered probes before giving up) | `8` | `2` |
 
-Chrome already probes idle connections every 45 seconds, but with the defaults macOS
-retries a failed probe 8 times, 75 seconds apart, so a dead connection lingers for
-about 12 minutes. Chrome reuses idle connections for up to 5. With the fix, three
-failed probes 3 seconds apart are enough, and the dead connection is gone about
-2.5 minutes after it was last used.
+Chrome enables TCP keepalive on its own connections and probes each idle one every
+45 seconds. With the defaults, macOS retries an unanswered probe 8 times, 75 seconds
+apart, so a dead connection lingers for about 10 minutes, and Chrome reuses idle
+connections for up to 5. With the fix, two unanswered probes one second apart are
+enough, and the dead connection is gone about 2:19 after it was last used (measured;
+the first release's 3 s × 3 gave 2:26).
 
-Side effect: every idle TCP connection on the Mac gets probed after 30 seconds, and an
-idle connection is dropped after a ~9 second network blip. Apps reconnect on their
-own. That is why this is meant to be switched on for an exam and off afterwards, not
-left on permanently.
+Side effect: any app that enables keepalive on its own connections (Chrome, ssh, most
+chat apps) now drops an idle connection after about 2 seconds of unanswered probes, so
+a short Wi-Fi hiccup can make such an app reconnect. Apps that do not enable keepalive
+are untouched. Chrome reconnects silently, and for the exam a false drop is harmless:
+probes only run on idle connections, and the next click simply opens a new one. Still,
+this is meant to be switched on for an exam and off afterwards, not left on permanently.
+
+The first release (same day, earlier) also forced keepalive onto every socket
+(`always_keepalive=1`, `keepidle=30000`). That never affected Chrome, which sets its own
+45-second idle time, and only widened the side effects. `on` now resets those two to
+their defaults; `status` shows `PARTIAL` until you run it.
+
+## Other browsers
+
+Only Chrome on macOS has been tested, and `test` simulates a Chrome connection. What to
+expect elsewhere, reasoned from how each browser handles connections rather than
+observed:
+
+- **Chromium-based browsers (Edge, Brave, Arc, Opera):** same network code as Chrome,
+  same 45-second keepalive and 5-minute connection reuse, so the bug and the fix should
+  both apply the same way.
+- **Firefox:** by default stops reusing a connection after 115 seconds idle
+  (`network.http.keep-alive.timeout`), which is before the server's drop, so it probably
+  never hits the bug, with or without this fix.
+- **Safari:** unknown. Apple's networking stack manages keepalive and connection reuse
+  itself, and it was not measured.
+- **Windows and Linux:** the script refuses to run; the equivalent settings live
+  elsewhere and have not been tested.
+
+A note on why keepalive matters at all: connections that do not use keepalive received
+a clean close from the server at about 130 seconds and would simply reconnect. The
+silent drop only affected connections that were sending keepalive probes, which is what
+browsers do.
 
 ## How this was diagnosed
 
@@ -136,19 +170,12 @@ host, clean Wi-Fi link stats, no VPN or proxy):
 - Sockets with no keepalive at all received a clean reset from the server at about
   130 s. The silent drop only happens to connections that use TCP keepalive, which
   browsers do.
-- With the fix applied, the same Chrome-style sockets were detected as dead at about
-  147 s and failed fast instead of hanging.
+- With retries tightened, the same Chrome-style sockets were detected as dead instead
+  of hanging: at 2:26 with 3 s × 3 (first release) and 2:19 with 1 s × 2 (current),
+  measured 2026-09-21.
 
 The proper fix belongs to the exam host: close idle connections with a reset the client
 can see, or tolerate a stalled request instead of aborting the exam.
-
-## Scope
-
-- macOS only. The script refuses to run elsewhere. Windows and Linux use different
-  settings and have not been tested.
-- Untested alternative: Firefox discards idle connections after 115 seconds by default
-  (`network.http.keep-alive.timeout`), which is below the server's drop time, so it
-  should avoid the problem without any system change.
 
 ## Development
 

@@ -15,7 +15,12 @@ DEFAULT_STATE="net.inet.tcp.always_keepalive=0
 net.inet.tcp.keepcnt=8
 net.inet.tcp.keepidle=7200000
 net.inet.tcp.keepintvl=75000"
-FIX_STATE="net.inet.tcp.always_keepalive=1
+FIX_STATE="net.inet.tcp.always_keepalive=0
+net.inet.tcp.keepcnt=2
+net.inet.tcp.keepidle=7200000
+net.inet.tcp.keepintvl=1000"
+# The first release forced keepalive onto every socket; 'on' must undo that too.
+OLD_FIX_STATE="net.inet.tcp.always_keepalive=1
 net.inet.tcp.keepcnt=3
 net.inet.tcp.keepidle=30000
 net.inet.tcp.keepintvl=3000"
@@ -90,10 +95,9 @@ check "status reports ACTIVE when all four fix values are set" contains "ACTIVE"
 teardown
 
 setup
-printf '%s\n' "net.inet.tcp.always_keepalive=1" "net.inet.tcp.keepcnt=8" \
-  "net.inet.tcp.keepidle=30000" "net.inet.tcp.keepintvl=75000" > "$FAKE_SYSCTL_STATE"
+echo "$OLD_FIX_STATE" > "$FAKE_SYSCTL_STATE"
 run status
-check "status reports PARTIAL when only some fix values are set" contains "PARTIAL"
+check "status reports PARTIAL when the first-release settings are active" contains "PARTIAL"
 teardown
 
 # -------------------------------------------------------------------- on
@@ -102,6 +106,12 @@ run on
 check "on sets exactly the four tested fix values" [ "$(state)" = "$FIX_STATE" ]
 check "on exits 0 when it succeeds" [ "$RC" -eq 0 ]
 check "on changes the settings through sudo" grep -q "sysctl -w" "$FAKE_SUDO_LOG"
+teardown
+
+setup
+echo "$OLD_FIX_STATE" > "$FAKE_SYSCTL_STATE"
+run on
+check "on replaces the first-release settings with the current fix" [ "$(state)" = "$FIX_STATE" ]
 teardown
 
 setup
